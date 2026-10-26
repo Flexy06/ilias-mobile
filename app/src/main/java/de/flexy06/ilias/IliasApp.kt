@@ -11,6 +11,7 @@ class IliasApp : Application() {
         super.onCreate()
         IliasSession.init(this)
         AppSettings.init(this)
+        AssetCache.init(this)
     }
 }
 
@@ -20,20 +21,20 @@ object AppSettings {
 
     var compactMode by mutableStateOf(true)
         private set
-    var darkPages by mutableStateOf(true)
+    var appTheme by mutableStateOf(true)
         private set
 
     fun init(context: Context) {
         prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
         compactMode = prefs.getBoolean("compact", true)
-        darkPages = prefs.getBoolean("dark_pages", true)
+        appTheme = prefs.getBoolean("app_theme", true)
     }
 
     fun updateCompact(v: Boolean) {
         compactMode = v; prefs.edit().putBoolean("compact", v).apply()
     }
 
-    fun updateDarkPages(v: Boolean) {
-        darkPages = v; prefs.edit().putBoolean("dark_pages", v).apply()
+    fun updateAppTheme(v: Boolean) {
+        appTheme = v; prefs.edit().putBoolean("app_theme", v).apply()
     }
 }

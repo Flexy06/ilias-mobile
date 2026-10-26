@@ -11,6 +11,7 @@ import android.webkit.JavascriptInterface
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.runtime.getValue
@@ -18,7 +19,9 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+import androidx.webkit.ScriptHandler
 import androidx.webkit.WebSettingsCompat
+import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -40,6 +43,8 @@ class IliasBrowser(context: Context, val homeUrl: String, private val host: Brow
 
     var title by mutableStateOf("")
         private set
+    var subtitle by mutableStateOf("")
+        private set
     var progress by mutableFloatStateOf(0f)
         private set
     var loading by mutableStateOf(false)
@@ -53,6 +58,10 @@ class IliasBrowser(context: Context, val homeUrl: String, private val host: Brow
     private var reloginRunning = false
     private var lastReloginAt = 0L
     @Volatile private var atTop = true
+    private var theme: PageStyle.Theme? = null
+    private var styleScript: String = PageStyle.installScript(null, AppSettings.compactMode)
+    private var startScript: ScriptHandler? = null
+    private val docStartSupported = WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)
 
     val webView: WebView = WebView(context).apply {
         layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
@@ -65,6 +74,9 @@ class IliasBrowser(context: Context, val homeUrl: String, private val host: Brow
         settings.displayZoomControls = false
         settings.mediaPlaybackRequiresUserGesture = false
         settings.javaScriptCanOpenWindowsAutomatically = true
+        settings.offscreenPreRaster = true
+        isVerticalScrollBarEnabled = false
+        overScrollMode = WebView.OVER_SCROLL_NEVER
         CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
         addJavascriptInterface(Bridge(), "IliasApp")
         webViewClient = Client()
@@ -78,10 +90,6 @@ class IliasBrowser(context: Context, val homeUrl: String, private val host: Brow
         setOnChildScrollUpCallback { _, _ -> webView.scrollY > 0 || !atTop }
     }
 
-    init {
-        applySettings()
-    }
-
     fun ensureLoaded() {
         if (webView.url == null) webView.loadUrl(homeUrl)
     }
@@ -91,47 +99,37 @@ class IliasBrowser(context: Context, val homeUrl: String, private val host: Brow
     fun goBack() = webView.goBack()
     fun reload() = webView.reload()
 
-    fun setRefreshColors(indicator: Int, background: Int) {
+    fun setColors(theme: PageStyle.Theme, indicator: Int, background: Int) {
+        this.theme = theme
         container.setColorSchemeColors(indicator)
         container.setProgressBackgroundColorSchemeColor(background)
+        webView.setBackgroundColor(background)
+        applySettings()
     }
 
+    /** Re-applies theme / compact settings to the current page and all future pages. */
     fun applySettings() {
+        val useTheme = AppSettings.appTheme
         if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
-            WebSettingsCompat.setAlgorithmicDarkeningAllowed(webView.settings, AppSettings.darkPages)
+            // Our own theme already handles dark mode; only fall back to Chrome's darkening without it.
+            WebSettingsCompat.setAlgorithmicDarkeningAllowed(webView.settings, !useTheme)
         }
-        injectPageTweaks()
+        styleScript = PageStyle.installScript(if (useTheme) theme else null, AppSettings.compactMode)
+        if (docStartSupported) {
+            startScript?.remove()
+            startScript = WebViewCompat.addDocumentStartJavaScript(webView, styleScript, setOf("https://${Config.HOST}"))
+        }
+        webView.evaluateJavascript(styleScript, null)
     }
 
     fun destroy() {
+        startScript?.remove()
         container.removeAllViews()
         webView.destroy()
     }
 
-    private fun injectPageTweaks() {
-        val css = buildString {
-            if (AppSettings.compactMode) {
-                // Our native bottom bar replaces the ILIAS main bar.
-                append(".il-mainbar,.il-mainbar-slates,.il-mainbar-remove-tool{display:none!important}")
-                append(".il-layout-page{padding-bottom:0!important}")
-            }
-            append("*{-webkit-tap-highlight-color:transparent}")
-        }
-        val js = """
-            (function(){
-              var s=document.getElementById('ilias-app-style');
-              if(!s){s=document.createElement('style');s.id='ilias-app-style';(document.head||document.documentElement).appendChild(s);}
-              s.textContent=${org.json.JSONObject.quote(css)};
-              if(!window.__iliasAppScroll){
-                window.__iliasAppScroll=true;
-                document.addEventListener('scroll',function(e){
-                  var t=(e.target===document)?document.scrollingElement:e.target;
-                  if(t&&IliasApp)IliasApp.onScroll(t.scrollTop<=0);
-                },true);
-              }
-            })();
-        """.trimIndent()
-        webView.evaluateJavascript(js, null)
+    private fun injectFallback() {
+        if (!docStartSupported) webView.evaluateJavascript(styleScript, null)
     }
 
     private fun relogin(view: WebView, loginUri: Uri?) {
@@ -167,9 +165,20 @@ class IliasBrowser(context: Context, val homeUrl: String, private val host: Brow
         fun onScroll(top: Boolean) {
             atTop = top
         }
+
+        @JavascriptInterface
+        fun onPageInfo(pageTitle: String?, parent: String?) {
+            webView.post {
+                pageTitle?.trim()?.takeIf { it.isNotEmpty() }?.let { title = it }
+                subtitle = parent?.trim().orEmpty()
+            }
+        }
     }
 
     private inner class Client : WebViewClient() {
+        override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
+            if (AssetCache.isStatic(request)) AssetCache.load(request) else null
+
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
             val uri = request.url
             if (!request.isForMainFrame) return false
@@ -198,7 +207,9 @@ class IliasBrowser(context: Context, val homeUrl: String, private val host: Brow
         }
 
         override fun onPageCommitVisible(view: WebView, url: String) {
-            injectPageTweaks()
+            injectFallback()
+            loading = false
+            container.isRefreshing = false
         }
 
         override fun onPageFinished(view: WebView, url: String) {
@@ -206,8 +217,8 @@ class IliasBrowser(context: Context, val homeUrl: String, private val host: Brow
             container.isRefreshing = false
             canGoBack = view.canGoBack()
             currentUrl = url
-            title = cleanTitle(view.title)
-            injectPageTweaks()
+            if (title.isEmpty()) title = cleanTitle(view.title)
+            injectFallback()
             val uri = Uri.parse(url)
             if (Config.isIliasHost(uri) && !Config.isLoginUrl(uri)) {
                 lastGoodUrl = url
@@ -232,7 +243,9 @@ class IliasBrowser(context: Context, val homeUrl: String, private val host: Brow
         }
 
         override fun onReceivedTitle(view: WebView, t: String?) {
+            // The page's own <h1> (reported via onPageInfo) wins; this is only the first guess.
             title = cleanTitle(t)
+            subtitle = ""
         }
 
         override fun onShowFileChooser(
@@ -242,9 +255,12 @@ class IliasBrowser(context: Context, val homeUrl: String, private val host: Brow
         ): Boolean = host.chooseFiles(filePathCallback, fileChooserParams)
     }
 
+    /** "Inhalt: Höhere Mathematik 1: ILIAS" → "Höhere Mathematik 1" */
     private fun cleanTitle(t: String?): String {
-        val s = t.orEmpty().trim()
+        var s = t.orEmpty().trim()
         if (s.isEmpty() || s.startsWith("http")) return ""
-        return s.split(" - ", " | ").first().trim()
+        s = s.removeSuffix(": ILIAS").removeSuffix(" - ILIAS").removeSuffix("ILIAS").trim().trimEnd(':', '-', ' ')
+        val parts = s.split(": ")
+        return (if (parts.size > 1) parts.drop(1).joinToString(": ") else s).trim()
     }
 }

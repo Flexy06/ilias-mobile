@@ -17,6 +17,10 @@ object Config {
     const val BASE = "https://$HOST"
     const val LOGIN_URL = "$BASE/login.php?cmd=force_login&lang=de"
 
+    const val SEARCH_URL = "$BASE/ilias.php?baseClass=ilSearchControllerGUI"
+    const val PROFILE_URL = "$BASE/ilias.php?baseClass=ilDashboardGUI&cmd=jumpToProfile"
+    const val SETTINGS_URL = "$BASE/ilias.php?baseClass=ilDashboardGUI&cmd=jumpToSettings"
+
     fun isIliasHost(uri: Uri): Boolean = uri.host.equals(HOST, ignoreCase = true)
 
     /** True for ILIAS pages that show the login form. */
