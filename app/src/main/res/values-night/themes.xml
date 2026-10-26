@@ -1,0 +1,9 @@
+<resources>
+    <color name="splash_bg">#1A1111</color>
+
+    <style name="Theme.Ilias" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/splash_bg</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+</resources>
