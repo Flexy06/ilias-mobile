@@ -263,7 +263,7 @@ fun MainScreen(
                     ),
                 )
                 Box(Modifier.fillMaxWidth().height(4.dp)) {
-                    AnimatedVisibility(current.loading, enter = fadeIn(), exit = fadeOut()) {
+                    androidx.compose.animation.AnimatedVisibility(current.loading, enter = fadeIn(), exit = fadeOut()) {
                         LinearWavyProgressIndicator(
                             progress = { current.progress.coerceAtLeast(0.08f) },
                             modifier = Modifier.fillMaxWidth(),

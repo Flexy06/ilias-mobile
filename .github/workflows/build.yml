@@ -41,11 +41,17 @@ jobs:
           ./gradlew --no-daemon --console=plain assembleRelease 2>&1 | tee build.log
 
       # Makes compiler errors visible as annotations on the run page.
+      # GitHub shows max. 10 annotations per step, so errors are bundled into few multi-line ones.
       - name: Report build errors
         if: failure()
         run: |
-          grep -E '^e: |What went wrong|^> |error:|ERROR:' build.log | head -40 | while IFS= read -r line; do
-            echo "::error::${line//%/%25}"
+          { grep -E '^e: |^ERROR:|error: ' build.log || true; grep -A12 'What went wrong' build.log || true; } \
+            | grep -v '^> Task' | grep -v '^\s*$' | head -60 > errors.txt
+          [ -s errors.txt ] || { echo "::error::Keine Fehlerzeilen gefunden - siehe Log"; exit 0; }
+          split -l 6 errors.txt part_
+          for f in part_*; do
+            msg=$(sed 's/%/%25/g' "$f" | awk 'BEGIN{ORS="%0A"}{print}')
+            echo "::error::$msg"
           done
 
       - name: Publish release
