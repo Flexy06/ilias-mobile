@@ -56,18 +56,22 @@ object IliasSession {
     fun hasCredentials(): Boolean = credentialStore.username() != null
 
     /** Single-flight re-login with the stored credentials. */
-    suspend fun relogin(): LoginResult = mutex.withLock {
-        if (SystemClock.elapsedRealtime() - lastSuccessAt < 5_000) return LoginResult.Success
-        val c = credentialStore.load()
-            ?: return LoginResult.InvalidCredentials("Keine gespeicherten Zugangsdaten")
-        loginInternal(c)
+    suspend fun relogin(): LoginResult {
+        mutex.withLock {
+            if (SystemClock.elapsedRealtime() - lastSuccessAt < 5_000) return LoginResult.Success
+            val c = credentialStore.load()
+                ?: return LoginResult.InvalidCredentials("Keine gespeicherten Zugangsdaten")
+            return loginInternal(c)
+        }
     }
 
     /** First login from the login screen; stores the credentials on success. */
-    suspend fun login(c: Credentials): LoginResult = mutex.withLock {
-        val r = loginInternal(c)
-        if (r is LoginResult.Success) credentialStore.save(c)
-        r
+    suspend fun login(c: Credentials): LoginResult {
+        mutex.withLock {
+            val r = loginInternal(c)
+            if (r is LoginResult.Success) credentialStore.save(c)
+            return r
+        }
     }
 
     suspend fun logout() {

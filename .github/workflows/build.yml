@@ -1,4 +1,4 @@
-name: Build APK
+name: Build & Release APK
 
 on:
   push:
@@ -10,16 +10,16 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 17
 
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v5
 
       - name: Decode signing key
         env:
@@ -37,18 +37,29 @@ jobs:
           SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon assembleRelease
-          cp app/build/outputs/apk/release/app-release.apk "ILIAS-1.0.${GITHUB_RUN_NUMBER}.apk"
+          set -o pipefail
+          ./gradlew --no-daemon --console=plain assembleRelease 2>&1 | tee build.log
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ILIAS-apk
-          path: ILIAS-*.apk
+      # Makes compiler errors visible as annotations on the run page.
+      - name: Report build errors
+        if: failure()
+        run: |
+          grep -E '^e: |What went wrong|^> |error:|ERROR:' build.log | head -40 | while IFS= read -r line; do
+            echo "::error::${line//%/%25}"
+          done
 
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "v1.0.${GITHUB_RUN_NUMBER}" "ILIAS-1.0.${GITHUB_RUN_NUMBER}.apk" \
-            --title "ILIAS 1.0.${GITHUB_RUN_NUMBER}" \
-            --notes "Automatischer Build von ${GITHUB_SHA::7}" --latest
+          V="1.0.${GITHUB_RUN_NUMBER}"
+          cp app/build/outputs/apk/release/app-release.apk "ILIAS-$V.apk"
+          gh release create "v$V" "ILIAS-$V.apk" \
+            --title "ILIAS $V" \
+            --notes "Automatischer Build von \`${GITHUB_SHA::7}\`: $(git log -1 --pretty=%s)" \
+            --latest
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ILIAS-apk
+          path: ILIAS-*.apk
